@@ -75,9 +75,7 @@ fn run_ssh(
 
     command
         .arg(remote_target(settings)?)
-        .arg("sh")
-        .arg("-lc")
-        .arg(remote_script)
+        .arg(remote_sh_command(remote_script))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -239,6 +237,10 @@ fn remote_dir_shell_expr(path: &str) -> Result<String, AppError> {
     Ok(shell_quote(path))
 }
 
+fn remote_sh_command(script: &str) -> String {
+    format!("sh -lc {}", shell_quote(script))
+}
+
 fn shell_quote(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
@@ -275,7 +277,7 @@ fn sanitize_ssh_error(stderr: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{remote_dir_shell_expr, shell_quote, validate_remote_dir};
+    use super::{remote_dir_shell_expr, remote_sh_command, shell_quote, validate_remote_dir};
 
     #[test]
     fn shell_quote_handles_single_quotes() {
@@ -299,5 +301,13 @@ mod tests {
             remote_dir_shell_expr("/srv/claude config").unwrap(),
             "'/srv/claude config'"
         );
+    }
+
+    #[test]
+    fn remote_sh_command_quotes_script_for_login_shells() {
+        let command = remote_sh_command("set -eu\ndir=\"$HOME\"/.claude\nprintf 'ok\\n'\n");
+        assert!(command.starts_with("sh -lc '"));
+        assert!(command.contains("dir=\"$HOME\"/.claude"));
+        assert!(command.contains("printf '\"'\"'ok\\n'\"'\"'"));
     }
 }
