@@ -726,9 +726,22 @@ impl LiveSnapshot {
 pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
     match app_type {
         AppType::Claude => {
-            let path = get_claude_settings_path();
             let settings = sanitize_claude_settings_for_live(&provider.settings_config);
-            write_json_file(&path, &settings)?;
+            if let Some(remote) = crate::settings::get_enabled_claude_remote_settings() {
+                match remote.mode {
+                    crate::settings::ClaudeRemoteMode::RemoteOnly => {
+                        crate::services::remote_claude::write_settings(&remote, &settings)?;
+                    }
+                    crate::settings::ClaudeRemoteMode::LocalAndRemote => {
+                        crate::services::remote_claude::write_settings(&remote, &settings)?;
+                        let path = get_claude_settings_path();
+                        write_json_file(&path, &settings)?;
+                    }
+                }
+            } else {
+                let path = get_claude_settings_path();
+                write_json_file(&path, &settings)?;
+            }
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(
@@ -1020,15 +1033,18 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(result)
         }
         AppType::Claude => {
-            let path = get_claude_settings_path();
-            if !path.exists() {
-                return Err(AppError::localized(
-                    "claude.live.missing",
-                    "Claude Code 配置文件不存在",
-                    "Claude settings file is missing",
-                ));
+            if let Some(remote) = crate::settings::get_enabled_claude_remote_settings() {
+                if matches!(
+                    remote.mode,
+                    crate::settings::ClaudeRemoteMode::RemoteOnly
+                ) {
+                    let mut value = crate::services::remote_claude::read_settings(&remote)?;
+                    let _ = normalize_claude_models_in_value(&mut value);
+                    return Ok(value);
+                }
             }
-            read_json_file(&path)
+
+            read_local_claude_live_settings(false)
         }
         AppType::ClaudeDesktop => Err(AppError::localized(
             "claude_desktop.live.read_unsupported",
@@ -1114,6 +1130,22 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
     }
 }
 
+fn read_local_claude_live_settings(normalize_models: bool) -> Result<Value, AppError> {
+    let path = get_claude_settings_path();
+    if !path.exists() {
+        return Err(AppError::localized(
+            "claude.live.missing",
+            "Claude Code 配置文件不存在",
+            "Claude settings file is missing",
+        ));
+    }
+    let mut value = read_json_file::<Value>(&path)?;
+    if normalize_models {
+        let _ = normalize_claude_models_in_value(&mut value);
+    }
+    Ok(value)
+}
+
 /// Import default configuration from live files
 ///
 /// Returns `Ok(true)` if a provider was actually imported,
@@ -1136,17 +1168,17 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
     let settings_config = match app_type {
         AppType::Codex => crate::codex_config::read_codex_live_settings()?,
         AppType::Claude => {
-            let settings_path = get_claude_settings_path();
-            if !settings_path.exists() {
-                return Err(AppError::localized(
-                    "claude.live.missing",
-                    "Claude Code 配置文件不存在",
-                    "Claude settings file is missing",
-                ));
+            if let Some(remote) = crate::settings::get_enabled_claude_remote_settings() {
+                if matches!(remote.mode, crate::settings::ClaudeRemoteMode::RemoteOnly) {
+                    let mut value = crate::services::remote_claude::read_settings(&remote)?;
+                    let _ = normalize_claude_models_in_value(&mut value);
+                    value
+                } else {
+                    read_local_claude_live_settings(true)?
+                }
+            } else {
+                read_local_claude_live_settings(true)?
             }
-            let mut v = read_json_file::<Value>(&settings_path)?;
-            let _ = normalize_claude_models_in_value(&mut v);
-            v
         }
         AppType::ClaudeDesktop => {
             return Err(AppError::localized(

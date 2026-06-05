@@ -303,6 +303,19 @@ export interface S3SyncSettings {
   status?: WebDavSyncStatus;
 }
 
+export type ClaudeRemoteMode = "remoteOnly" | "localAndRemote";
+
+export interface ClaudeRemoteSettings {
+  enabled?: boolean;
+  mode?: ClaudeRemoteMode;
+  host?: string;
+  port?: number;
+  username?: string;
+  remoteDir?: string;
+  sshKeyPath?: string;
+  connectTimeoutSecs?: number;
+}
+
 export type RemoteSnapshotLayout = "current" | "legacy";
 
 // 远端快照信息（下载前预览）
@@ -376,6 +389,9 @@ export interface Settings {
   openclawConfigDir?: string;
   // 覆盖 Hermes 配置目录（可选）
   hermesConfigDir?: string;
+
+  // Claude Code 远端 live 配置（可选）
+  claudeRemote?: ClaudeRemoteSettings;
 
   // ===== 当前供应商 ID（设备级）=====
   // 当前 Claude 供应商 ID（优先于数据库 is_current）

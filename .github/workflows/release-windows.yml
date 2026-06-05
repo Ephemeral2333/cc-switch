@@ -1,0 +1,195 @@
+name: Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag, for example v3.16.2"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark the GitHub Release as prerelease"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows-${{ inputs.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-release:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10.12.3
+          run_install: false
+
+      - name: Get pnpm store directory
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm cache
+        uses: actions/cache@v5
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-pnpm-store-
+
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript type check
+        run: pnpm typecheck
+
+      - name: Prepare Tauri signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY secret is missing" >&2
+            exit 1
+          fi
+
+          key_path="$RUNNER_TEMP/tauri_signing.key"
+          raw="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+
+          if printf '%s' "$raw" | head -n1 | grep -q '^untrusted comment:'; then
+            printf '%s\n' "$raw" > "$key_path"
+          else
+            if decoded=$(printf '%s' "$raw" | base64 --decode 2>/dev/null) \
+              && printf '%s' "$decoded" | head -n1 | grep -q '^untrusted comment:'; then
+              printf '%s\n' "$decoded" > "$key_path"
+            else
+              echo "TAURI_SIGNING_PRIVATE_KEY must be the private key file content or its base64 encoding" >&2
+              exit 1
+            fi
+          fi
+
+          key_b64=$(node -e "process.stdout.write(require('fs').readFileSync(process.argv[1]).toString('base64'))" "$key_path")
+          echo "TAURI_SIGNING_PRIVATE_KEY=$key_b64" >> "$GITHUB_ENV"
+
+          if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build Tauri App
+        run: pnpm tauri build
+
+      - name: Prepare Windows assets
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          $version = '${{ inputs.tag_name }}'
+
+          $msi = Get-ChildItem -Path 'src-tauri/target/release/bundle' -Recurse -Include *.msi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($null -eq $msi) {
+            throw 'No Windows MSI installer found'
+          }
+
+          $msiDest = "CC-Switch-$version-Windows.msi"
+          Copy-Item $msi.FullName (Join-Path release-assets $msiDest)
+
+          $sigPath = "$($msi.FullName).sig"
+          if (-not (Test-Path $sigPath)) {
+            throw "No updater signature found for $($msi.Name)"
+          }
+          Copy-Item $sigPath (Join-Path release-assets "$msiDest.sig")
+
+          $exeCandidates = @(
+            'src-tauri/target/release/cc-switch.exe',
+            'src-tauri/target/x86_64-pc-windows-msvc/release/cc-switch.exe'
+          )
+          $exePath = $exeCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($null -ne $exePath) {
+            $portableDir = 'release-assets/CC-Switch-Portable'
+            New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+            Copy-Item $exePath $portableDir
+            Set-Content -Path (Join-Path $portableDir 'portable.ini') -Value @('portable=true') -Encoding UTF8
+            Compress-Archive -Path "$portableDir/*" -DestinationPath "release-assets/CC-Switch-$version-Windows-Portable.zip" -Force
+            Remove-Item -Recurse -Force $portableDir
+          }
+
+      - name: Generate latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="${{ inputs.tag_name }}"
+          version="${tag#v}"
+          pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          msi_name="CC-Switch-${tag}-Windows.msi"
+          sig="$(cat "release-assets/${msi_name}.sig")"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}/${msi_name}"
+
+          LATEST_VERSION="$version" \
+          LATEST_NOTES="Release $tag" \
+          LATEST_PUB_DATE="$pub_date" \
+          LATEST_SIGNATURE="$sig" \
+          LATEST_URL="$url" \
+          node <<'NODE'
+          const fs = require('fs');
+          const latest = {
+            version: process.env.LATEST_VERSION,
+            notes: process.env.LATEST_NOTES,
+            pub_date: process.env.LATEST_PUB_DATE,
+            platforms: {
+              "windows-x86_64": {
+                signature: process.env.LATEST_SIGNATURE,
+                url: process.env.LATEST_URL
+              }
+            }
+          };
+          fs.writeFileSync('release-assets/latest.json', `${JSON.stringify(latest, null, 2)}\n`);
+          NODE
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: cc-switch-${{ inputs.tag_name }}-windows
+          path: release-assets/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          tag="${{ inputs.tag_name }}"
+          args=()
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" release-assets/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" release-assets/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "CC Switch $tag" \
+              --notes "Windows release for CC Switch $tag." \
+              "${args[@]}"
+          fi

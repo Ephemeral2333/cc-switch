@@ -1156,6 +1156,8 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::test_claude_remote_connection,
+            commands::sync_current_claude_provider_remote,
             commands::get_rectifier_config,
             commands::set_rectifier_config,
             commands::get_optimizer_config,

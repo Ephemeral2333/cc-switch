@@ -276,6 +276,102 @@ impl S3SyncSettings {
     }
 }
 
+fn default_claude_remote_port() -> u16 {
+    22
+}
+
+fn default_claude_remote_dir() -> String {
+    "~/.claude".to_string()
+}
+
+fn default_claude_remote_connect_timeout_secs() -> u64 {
+    10
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ClaudeRemoteMode {
+    RemoteOnly,
+    LocalAndRemote,
+}
+
+impl Default for ClaudeRemoteMode {
+    fn default() -> Self {
+        Self::RemoteOnly
+    }
+}
+
+/// Claude Code remote live-config target.
+///
+/// Device-local setting. It only controls where Claude Code `settings.json`
+/// is written during provider switches / live sync; providers remain stored in
+/// the normal CC Switch database.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaudeRemoteSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub mode: ClaudeRemoteMode,
+    #[serde(default)]
+    pub host: String,
+    #[serde(default = "default_claude_remote_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub username: String,
+    #[serde(default = "default_claude_remote_dir")]
+    pub remote_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_key_path: Option<String>,
+    #[serde(default = "default_claude_remote_connect_timeout_secs")]
+    pub connect_timeout_secs: u64,
+}
+
+impl Default for ClaudeRemoteSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: ClaudeRemoteMode::RemoteOnly,
+            host: String::new(),
+            port: default_claude_remote_port(),
+            username: String::new(),
+            remote_dir: default_claude_remote_dir(),
+            ssh_key_path: None,
+            connect_timeout_secs: default_claude_remote_connect_timeout_secs(),
+        }
+    }
+}
+
+impl ClaudeRemoteSettings {
+    pub fn normalize(&mut self) {
+        self.host = self.host.trim().to_string();
+        self.username = self.username.trim().to_string();
+        self.remote_dir = self.remote_dir.trim().to_string();
+        if self.remote_dir.is_empty() {
+            self.remote_dir = default_claude_remote_dir();
+        }
+        self.ssh_key_path = self
+            .ssh_key_path
+            .as_ref()
+            .map(|value| value.trim())
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        if self.port == 0 {
+            self.port = default_claude_remote_port();
+        }
+        if self.connect_timeout_secs == 0 {
+            self.connect_timeout_secs = default_claude_remote_connect_timeout_secs();
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.enabled
+            && self.host.trim().is_empty()
+            && self.username.trim().is_empty()
+            && self.ssh_key_path.as_deref().unwrap_or("").trim().is_empty()
+    }
+}
+
 /// 本机自动迁移状态。
 ///
 /// 这里记录的是本机启动时执行过的一次性迁移；标记不随数据库同步。
@@ -387,6 +483,10 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hermes_config_dir: Option<String>,
 
+    // ===== Claude Code 远端 live 配置 =====
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_remote: Option<ClaudeRemoteSettings>,
+
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -486,6 +586,7 @@ impl Default for AppSettings {
             opencode_config_dir: None,
             openclaw_config_dir: None,
             hermes_config_dir: None,
+            claude_remote: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -565,6 +666,13 @@ impl AppSettings {
             .map(|s| s.trim())
             .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja"))
             .map(|s| s.to_string());
+
+        if let Some(remote) = &mut self.claude_remote {
+            remote.normalize();
+            if remote.is_empty() {
+                self.claude_remote = None;
+            }
+        }
 
         if let Some(sync) = &mut self.webdav_sync {
             sync.normalize();
@@ -827,6 +935,17 @@ pub fn preserve_codex_official_auth_on_switch() -> bool {
             e.into_inner()
         })
         .preserve_codex_official_auth_on_switch
+}
+
+pub fn get_claude_remote_settings() -> Option<ClaudeRemoteSettings> {
+    settings_store()
+        .read()
+        .ok()
+        .and_then(|settings| settings.claude_remote.clone())
+}
+
+pub fn get_enabled_claude_remote_settings() -> Option<ClaudeRemoteSettings> {
+    get_claude_remote_settings().and_then(|settings| settings.enabled.then_some(settings))
 }
 
 // ===== 当前供应商管理函数 =====

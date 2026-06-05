@@ -118,6 +118,16 @@ export function useSettingsForm(): UseSettingsFormResult {
       skipClaudeOnboarding: data.skipClaudeOnboarding ?? false,
       preserveCodexOfficialAuthOnSwitch:
         data.preserveCodexOfficialAuthOnSwitch ?? false,
+      claudeRemote: {
+        enabled: data.claudeRemote?.enabled ?? false,
+        mode: data.claudeRemote?.mode ?? "remoteOnly",
+        host: data.claudeRemote?.host ?? "",
+        port: data.claudeRemote?.port ?? 22,
+        username: data.claudeRemote?.username ?? "",
+        remoteDir: data.claudeRemote?.remoteDir ?? "~/.claude",
+        sshKeyPath: data.claudeRemote?.sshKeyPath,
+        connectTimeoutSecs: data.claudeRemote?.connectTimeoutSecs ?? 10,
+      },
       claudeConfigDir: sanitizeDir(data.claudeConfigDir),
       codexConfigDir: sanitizeDir(data.codexConfigDir),
       geminiConfigDir: sanitizeDir(data.geminiConfigDir),
@@ -143,6 +153,15 @@ export function useSettingsForm(): UseSettingsFormResult {
             enableClaudePluginIntegration: false,
             skipClaudeOnboarding: false,
             preserveCodexOfficialAuthOnSwitch: false,
+            claudeRemote: {
+              enabled: false,
+              mode: "remoteOnly",
+              host: "",
+              port: 22,
+              username: "",
+              remoteDir: "~/.claude",
+              connectTimeoutSecs: 10,
+            },
             language: readPersistedLanguage(),
           } as SettingsFormState);
 
@@ -182,6 +201,16 @@ export function useSettingsForm(): UseSettingsFormResult {
         skipClaudeOnboarding: serverData.skipClaudeOnboarding ?? false,
         preserveCodexOfficialAuthOnSwitch:
           serverData.preserveCodexOfficialAuthOnSwitch ?? false,
+        claudeRemote: {
+          enabled: serverData.claudeRemote?.enabled ?? false,
+          mode: serverData.claudeRemote?.mode ?? "remoteOnly",
+          host: serverData.claudeRemote?.host ?? "",
+          port: serverData.claudeRemote?.port ?? 22,
+          username: serverData.claudeRemote?.username ?? "",
+          remoteDir: serverData.claudeRemote?.remoteDir ?? "~/.claude",
+          sshKeyPath: serverData.claudeRemote?.sshKeyPath,
+          connectTimeoutSecs: serverData.claudeRemote?.connectTimeoutSecs ?? 10,
+        },
         claudeConfigDir: sanitizeDir(serverData.claudeConfigDir),
         codexConfigDir: sanitizeDir(serverData.codexConfigDir),
         geminiConfigDir: sanitizeDir(serverData.geminiConfigDir),

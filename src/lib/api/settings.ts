@@ -3,6 +3,7 @@ import type {
   Settings,
   WebDavSyncSettings,
   S3SyncSettings,
+  ClaudeRemoteSettings,
   RemoteSnapshotInfo,
 } from "@/types";
 import type { AppId } from "./types";
@@ -93,6 +94,16 @@ export const settingsApi = {
 
   async clearClaudeOnboardingSkip(): Promise<boolean> {
     return await invoke("clear_claude_onboarding_skip");
+  },
+
+  async testClaudeRemoteConnection(
+    settings: ClaudeRemoteSettings,
+  ): Promise<boolean> {
+    return await invoke("test_claude_remote_connection", { settings });
+  },
+
+  async syncCurrentClaudeProviderRemote(): Promise<boolean> {
+    return await invoke("sync_current_claude_provider_remote");
   },
 
   async saveFileDialog(defaultName: string): Promise<string | null> {

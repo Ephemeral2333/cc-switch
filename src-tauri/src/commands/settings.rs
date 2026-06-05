@@ -1,6 +1,11 @@
 #![allow(non_snake_case)]
 
+use crate::app_config::AppType;
+use crate::error::AppError;
+use crate::services::provider::ProviderService;
+use crate::store::AppState;
 use tauri::AppHandle;
+use tauri::State;
 
 fn merge_settings_for_save(
     mut incoming: crate::settings::AppSettings,
@@ -34,6 +39,9 @@ fn merge_settings_for_save(
             incoming_sync.secret_access_key = existing_sync.secret_access_key.clone();
         }
         _ => {}
+    }
+    if incoming.claude_remote.is_none() {
+        incoming.claude_remote = existing.claude_remote.clone();
     }
     if incoming.local_migrations.is_none() {
         incoming.local_migrations = existing.local_migrations.clone();
@@ -69,6 +77,34 @@ pub async fn save_settings(settings: crate::settings::AppSettings) -> Result<boo
     let merged = merge_settings_for_save(settings, &existing);
     crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn test_claude_remote_connection(
+    settings: crate::settings::ClaudeRemoteSettings,
+) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::services::remote_claude::test_connection(&settings)
+    })
+    .await
+    .map_err(|e| format!("测试远端 Claude 连接失败: {e}"))?
+    .map(|_| true)
+    .map_err(|e: AppError| e.to_string())
+}
+
+#[tauri::command]
+pub async fn sync_current_claude_provider_remote(
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let app_state = AppState::new(db);
+        ProviderService::sync_current_provider_for_app(&app_state, AppType::Claude)?;
+        Ok::<_, AppError>(true)
+    })
+    .await
+    .map_err(|e| format!("同步当前 Claude 供应商到远端失败: {e}"))?
+    .map_err(|e: AppError| e.to_string())
 }
 
 /// 重启应用程序（当 app_config_dir 变更后使用）
@@ -116,8 +152,9 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 mod tests {
     use super::merge_settings_for_save;
     use crate::settings::{
-        AppSettings, CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
-        LocalMigrations, S3SyncSettings, WebDavSyncSettings,
+        AppSettings, ClaudeRemoteSettings, CodexProviderTemplateMigration,
+        CodexThirdPartyHistoryProviderBucketMigration, LocalMigrations, S3SyncSettings,
+        WebDavSyncSettings,
     };
 
     #[test]
@@ -295,6 +332,30 @@ mod tests {
                 .as_ref()
                 .map(|v| v.secret_access_key.as_str()),
             Some("secret")
+        );
+    }
+
+    #[test]
+    fn save_settings_should_preserve_claude_remote_when_payload_omits_it() {
+        let existing = AppSettings {
+            claude_remote: Some(ClaudeRemoteSettings {
+                enabled: true,
+                host: "example.com".to_string(),
+                username: "ubuntu".to_string(),
+                ..ClaudeRemoteSettings::default()
+            }),
+            ..AppSettings::default()
+        };
+
+        let incoming = AppSettings::default();
+        let merged = merge_settings_for_save(incoming, &existing);
+
+        assert_eq!(
+            merged
+                .claude_remote
+                .as_ref()
+                .map(|remote| remote.host.as_str()),
+            Some("example.com")
         );
     }
 
