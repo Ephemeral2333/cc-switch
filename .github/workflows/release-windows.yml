@@ -70,23 +70,30 @@ jobs:
             exit 1
           fi
 
-          key_path="$RUNNER_TEMP/tauri_signing.key"
-          raw="${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"
+          raw="$(printf '%s' "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" | tr -d '\r\n')"
 
-          if printf '%s' "$raw" | head -n1 | grep -q '^untrusted comment:'; then
-            printf '%s\n' "$raw" > "$key_path"
+          is_tauri_key() {
+            printf '%s' "$1" \
+              | base64 --decode 2>/dev/null \
+              | head -n1 \
+              | grep -q '^untrusted comment:'
+          }
+
+          if is_tauri_key "$raw"; then
+            signing_key="$raw"
           else
-            if decoded=$(printf '%s' "$raw" | base64 --decode 2>/dev/null) \
-              && printf '%s' "$decoded" | head -n1 | grep -q '^untrusted comment:'; then
-              printf '%s\n' "$decoded" > "$key_path"
+            decoded="$(printf '%s' "$raw" | base64 --decode 2>/dev/null | tr -d '\r\n' || true)"
+            if [ -n "$decoded" ] && is_tauri_key "$decoded"; then
+              signing_key="$decoded"
+            elif printf '%s' "$raw" | head -n1 | grep -q '^untrusted comment:'; then
+              signing_key="$(printf '%s\n' "$raw" | base64 | tr -d '\r\n')"
             else
-              echo "TAURI_SIGNING_PRIVATE_KEY must be the private key file content or its base64 encoding" >&2
+              echo "TAURI_SIGNING_PRIVATE_KEY must be a Tauri private key string, private key file content, or their base64 encoding" >&2
               exit 1
             fi
           fi
 
-          key_b64=$(node -e "process.stdout.write(require('fs').readFileSync(process.argv[1]).toString('base64'))" "$key_path")
-          echo "TAURI_SIGNING_PRIVATE_KEY=$key_b64" >> "$GITHUB_ENV"
+          echo "TAURI_SIGNING_PRIVATE_KEY=$signing_key" >> "$GITHUB_ENV"
 
           if [ -n "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" ]; then
             echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> "$GITHUB_ENV"
