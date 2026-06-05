@@ -179,9 +179,7 @@ export function ClaudeRemoteSettings({
             value={remote.username ?? ""}
             placeholder="ubuntu"
             className="text-xs"
-            onChange={(event) =>
-              updateRemote({ username: event.target.value })
-            }
+            onChange={(event) => updateRemote({ username: event.target.value })}
           />
         </Field>
 
@@ -301,13 +299,7 @@ export function ClaudeRemoteSettings({
   );
 }
 
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: ReactNode;
-}) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="space-y-1.5 block">
       <span className="text-xs font-medium text-foreground">{label}</span>

@@ -288,17 +288,12 @@ fn default_claude_remote_connect_timeout_secs() -> u64 {
     10
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ClaudeRemoteMode {
+    #[default]
     RemoteOnly,
     LocalAndRemote,
-}
-
-impl Default for ClaudeRemoteMode {
-    fn default() -> Self {
-        Self::RemoteOnly
-    }
 }
 
 /// Claude Code remote live-config target.
